@@ -1,17 +1,26 @@
 use anyhow::*;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use image::RgbaImage;
 
 struct ResourceManager<T> {
+    resource_dir: PathBuf,
     resources: HashMap<String, Arc<T>>,
 }
 
 impl<T> ResourceManager<T> {
-    fn new() -> Self {
+    fn new(dir: Option<&str>) -> Self {
+        let mut resource_dir = PathBuf::new();
+        if let Some(rd) = dir {
+            resource_dir.push(rd);
+        }
         Self {
+            resource_dir,
             resources: HashMap::new(),
         }
+    }
+    fn set_resource_dir(&mut self, dir: &str) {
+        self.resource_dir = PathBuf::from(dir);
     }
     fn get(&self, resource: &str) -> Option<&Arc<T>> {
         self.resources.get(resource)
@@ -48,10 +57,19 @@ where
     }
     Ok(())
 }
+
+// Perhaps make a Trait Object, Resource, That lets you load it in?
+// You create an empty struct of the trait object? and then load the by calling the method on that?
+
+// TODO: Make it less complicated to load in a resource type
+// Ideally it should be as simple as:
+// rm.set_resource_dir("dir_name");
+// rm.load_resources();
+
 fn main() {
-    let pwd = std::env::current_dir().unwrap();
-    println!("{}", pwd.display());
-    let mut rm: ResourceManager<Texture> = ResourceManager::new();
+    let mut rm: ResourceManager<Texture> = ResourceManager::new(Some("textures"));
+    rm.set_resource_dir("textures");
+    println!("{:#?}", rm.resource_dir);
     load_resources(&mut rm, ".\\textures", &|file_path| {
         let bytes = std::fs::read(file_path).unwrap();
         let image = image::load_from_memory(&bytes[..]).unwrap();
