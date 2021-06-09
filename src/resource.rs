@@ -1,29 +1,21 @@
+use downcast_rs::{impl_downcast, DowncastSync};
 use image::RgbaImage;
-use std::path::PathBuf;
+use std::{any::Any, path::PathBuf};
 use uuid::Uuid;
 
-pub enum Resource {
-    Texture(Texture),
-    File(File),
-    //Audio,
-    //Item,
-}
-
-impl Resource {
-    pub fn inner(&self) -> Option<&Texture> {
-        match self {
-            Resource::Texture(t) => Some(&t),
-            _ => None,
-        }
-    }
-}
+pub trait Resource: DowncastSync {}
+impl_downcast!(sync Resource);
 
 pub struct Texture {
     pub diffuse: RgbaImage,
     pub file: Uuid,
 }
 
+impl Resource for Texture {}
+
 pub struct File {
     pub path_to_file: PathBuf,
     pub raw_file: Vec<u8>,
 }
+
+impl Resource for File {}

@@ -13,3 +13,4 @@ state = "0.4.2"
 enum_dispatch = "0.3.7"
 notify = "4.0.17"
 uuid = { version = "0.8.2", features= ["v4"] }
+downcast-rs = "1.2.0"
