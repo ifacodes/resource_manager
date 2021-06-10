@@ -1,20 +1,18 @@
 use downcast_rs::{impl_downcast, DowncastSync};
 use image::RgbaImage;
-use std::{any::Any, path::PathBuf};
-use uuid::Uuid;
+use std::sync::Arc;
 
 pub trait Resource: DowncastSync {}
 impl_downcast!(sync Resource);
 
 pub struct Texture {
     pub diffuse: RgbaImage,
-    pub file: Uuid,
 }
 
 impl Resource for Texture {}
 
 pub struct File {
-    pub path_to_file: PathBuf,
+    pub dependency: Arc<dyn Resource>,
     pub raw_file: Vec<u8>,
 }
 
