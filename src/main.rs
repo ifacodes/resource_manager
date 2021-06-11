@@ -12,7 +12,7 @@ fn main() {
     let texture2 = image.as_rgba8().unwrap().clone();
     assert_eq!(texture2, texture.diffuse, "test");
     loop {
-        match rm.update_resource() {
+        match rm.check_files() {
             Ok(()) => {}
             Err(e) => eprintln!("{:#?}", e),
         }

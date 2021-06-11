@@ -18,7 +18,7 @@ pub struct ResourceManager {
 impl ResourceManager {
     pub fn new(root: &str) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut _watcher = watcher(tx, Duration::from_millis(200)).unwrap();
+        let mut _watcher = watcher(tx, Duration::from_millis(2000)).unwrap();
         _watcher
             .watch("textures", RecursiveMode::Recursive)
             .unwrap();
@@ -29,20 +29,30 @@ impl ResourceManager {
             resources: HashMap::new(),
         }
     }
-    pub fn update_resource(&mut self) -> Result<()> {
+    #[allow(dead_code)]
+    fn init_generics(&mut self) -> Result<()> {
+        Ok(())
+    }
+    pub fn check_files(&mut self) -> Result<()> {
         match self.event_recv.recv() {
             Ok(event) => match event {
-                DebouncedEvent::Rename(src, dest) => {
-                    //do a thing with src and dest
-                    // for each path with a prefix that exists rename
-                }
-                DebouncedEvent::NoticeWrite(src) => {
-                    println!("{:#?} was edited!", src.file_stem())
+                DebouncedEvent::Write(src) => {
+                    println!("{:#?} was edited!", src);
                     // update file and dependencies
+                    if self
+                        .resources
+                        .contains_key(src.file_stem().unwrap().to_str().unwrap())
+                    {
+                        println!("Contains: {:#?}!", src.file_stem().unwrap());
+                        let _ = self.get_texture(src.file_stem().unwrap().to_str().unwrap());
+                    }
                 }
-                DebouncedEvent::NoticeRemove(src) => {
+                DebouncedEvent::Remove(src) => {
                     println!("{:#?} was deleted", src)
                     // remove all from hashmap
+                }
+                DebouncedEvent::Rename(src, dest) => {
+                    println!("{:#?} was renamed {:#?}", src, dest)
                 }
                 _ => {}
             },
@@ -54,7 +64,6 @@ impl ResourceManager {
         if TypeId::of::<Texture>() == root_resource.type_id() {
             //do a thing
         }*/
-        // match typeid of object
         Ok(())
     }
     pub fn get_texture(&mut self, filename: &str) -> Option<Arc<Texture>> {
