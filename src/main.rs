@@ -7,7 +7,7 @@ fn main() {
     env_logger::init();
     let mut rm: ResourceManager = ResourceManager::new();
     let texture = rm.get_texture("happy-tree").unwrap();
-    let _texture3 = rm.get_texture("mmm").unwrap();
+    let _test = rm.get_texture("mmm").unwrap();
 
     let bytes = std::fs::read("./textures/happy-tree.png").unwrap();
     let image = image::load_from_memory(&bytes[..]).unwrap();

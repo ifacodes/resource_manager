@@ -12,6 +12,7 @@ pub struct ResourceManager {
     resources: HashMap<ResourceKey, Arc<dyn Resource>>,
 }
 
+#[allow(dead_code)]
 impl ResourceManager {
     //
     //  This section is for initializing the ResourceManager
@@ -33,30 +34,81 @@ impl ResourceManager {
             resources: HashMap::new(),
         }
     }
-    #[allow(dead_code)]
-    fn init_generics(&mut self) -> Result<()> {
-        Ok(())
-    }
     //
     //  This section is for handling updates to the Resources
     //
     pub fn check_files(&mut self) -> Result<()> {
         match self.event_recv.recv() {
-            Ok(event) => match event {
-                DebouncedEvent::Write(src) => {
-                    let relative_path = src.strip_prefix(self.root.clone())?;
-                    println!("{:#?} was edited!", relative_path);
-                    // update file and dependencies
+            Ok(event) => {
+                match event {
+                    DebouncedEvent::Write(src) => {
+                        let filename = src
+                            .clone()
+                            .file_stem()
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string();
+                        let folder = src.parent().iter().last().unwrap().to_str().unwrap();
+                        let filepath = self.get_abs_file_path(&filename);
+                        println!("{:#?} was edited!", filename);
+                        // Is the File Resource loaded?
+                        let old_file = self.resources.get(&ResourceKey::File(filename));
+                        if old_file.is_some() {
+                            let old_file = old_file
+                                .unwrap()
+                                .clone()
+                                .downcast_arc::<File>()
+                                .map_err(|_| error!("this shouldn't happen..."))
+                                .unwrap();
+                            // Reload the File Resource
+                            let mut read_bytes = std::fs::read(filepath.clone());
+                            if read_bytes.is_err() {
+                                error!("unable to find file: {:#?}", filepath);
+                                match folder {
+                                    "textures" => {
+                                        read_bytes =
+                                            std::fs::read(self.get_abs_file_path("error-texture"));
+                                        debug!(
+                                            "loaded file: {:#?}",
+                                            self.get_abs_file_path("error-texture")
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                debug!("loaded file: {:#?}", filepath);
+                            }
+                            let mut file = File {
+                                dependency: None,
+                                data: read_bytes.unwrap(),
+                            };
+                            if old_file.dependency.is_some() {
+                                file.dependency = old_file.dependency.clone();
+                                //  update the dependency!
+                                match file.dependency.unwrap() {
+                                    ResourceKey::Texture(key) => {
+                                        let new_texture = Texture::new(&file.data[..]);
+                                        debug!("new texture created for: {:#?}", key);
+                                        self.resources.insert(
+                                            ResourceKey::Texture(key),
+                                            Arc::new(new_texture),
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    DebouncedEvent::Remove(src) => {
+                        println!("{:#?} was deleted", src);
+                    }
+                    DebouncedEvent::Rename(src, dest) => {
+                        println!("{:#?} was renamed {:#?}", src, dest)
+                        // this won't be handled for now
+                    }
+                    _ => {}
                 }
-                DebouncedEvent::Remove(src) => {
-                    println!("{:#?} was deleted", src);
-                }
-                DebouncedEvent::Rename(src, dest) => {
-                    println!("{:#?} was renamed {:#?}", src, dest)
-                    // this won't be handled for now
-                }
-                _ => {}
-            },
+            }
             Err(e) => eprintln!("watch error {:#?}", e),
         }
         Ok(())
@@ -106,7 +158,7 @@ impl ResourceManager {
                 debug!("File {:#?} already loaded.", filename);
                 let arc = self
                     .resources
-                    .get(&&ResourceKey::File(filename.to_string()))
+                    .get(&ResourceKey::File(filename.to_string()))
                     .unwrap()
                     .clone()
                     .downcast_arc::<File>()
@@ -117,7 +169,7 @@ impl ResourceManager {
             // create texture
             let texture: Arc<dyn Resource> =
                 Arc::new(self.load_texture_from_raw(file.data.clone())?);
-            file.dependency = Some(filename.to_string());
+            file.dependency = Some(ResourceKey::Texture(filename.to_string()));
             self.resources
                 .insert(ResourceKey::File(filename.to_string()), Arc::new(file));
             debug!("stored file resource for: {:#?}", filename);
@@ -140,12 +192,7 @@ impl ResourceManager {
     //  This section is for helper functions and things that shouldn't be public
     //
     fn load_texture_from_raw(&mut self, raw_bytes: Vec<u8>) -> Result<Texture> {
-        let image = image::load_from_memory(&raw_bytes[..])?;
-        let buf_image = image
-            .as_rgba8()
-            .ok_or(anyhow!("unable to get rgba data"))?
-            .clone();
-        Ok(Texture { data: buf_image })
+        Ok(Texture::new(&&raw_bytes[..]))
     }
     /// Update A File Resource
     fn update_file() {}
