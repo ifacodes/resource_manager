@@ -1,31 +1,40 @@
-use crate::resource::{File, Resource, Texture};
+use crate::resource::{File, Resource, ResourceKey, Texture};
 use anyhow::*;
+use log::{debug, error};
 use notify::{watcher, DebouncedEvent, ReadDirectoryChangesWatcher, RecursiveMode, Watcher};
 use std::{
-    any::{Any, TypeId},
     collections::HashMap,
-    path::PathBuf,
+    path::{self, Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+
 pub struct ResourceManager {
-    root: String,
+    root: PathBuf,
     event_recv: std::sync::mpsc::Receiver<DebouncedEvent>,
     _watcher: ReadDirectoryChangesWatcher,
-    resources: HashMap<String, Arc<dyn Resource>>,
+    file_map: HashMap<String, PathBuf>,
+    resources: HashMap<ResourceKey, Arc<dyn Resource>>,
 }
 
 impl ResourceManager {
-    pub fn new(root: &str) -> Self {
+    //
+    //  This section is for initializing the ResourceManager
+    //
+    pub fn new() -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut _watcher = watcher(tx, Duration::from_millis(2000)).unwrap();
         _watcher
             .watch("textures", RecursiveMode::Recursive)
             .unwrap();
+        let file = std::fs::File::open("./resources.json").unwrap();
+        let buffer = std::io::BufReader::new(file);
+        let file_map: HashMap<String, PathBuf> = serde_json::from_reader(buffer).unwrap();
         Self {
-            root: root.to_string(),
+            root: std::env::current_dir().unwrap(),
             event_recv: rx,
             _watcher,
+            file_map,
             resources: HashMap::new(),
         }
     }
@@ -33,78 +42,105 @@ impl ResourceManager {
     fn init_generics(&mut self) -> Result<()> {
         Ok(())
     }
+    //
+    //  This section is for handling updates to the Resources
+    //
     pub fn check_files(&mut self) -> Result<()> {
         match self.event_recv.recv() {
             Ok(event) => match event {
                 DebouncedEvent::Write(src) => {
-                    println!("{:#?} was edited!", src);
+                    let relative_path = src.strip_prefix(self.root.clone())?;
+                    println!("{:#?} was edited!", relative_path);
                     // update file and dependencies
-                    if self
-                        .resources
-                        .contains_key(src.file_stem().unwrap().to_str().unwrap())
-                    {
-                        println!("Contains: {:#?}!", src.file_stem().unwrap());
-                        let _ = self.get_texture(src.file_stem().unwrap().to_str().unwrap());
-                    }
                 }
                 DebouncedEvent::Remove(src) => {
-                    println!("{:#?} was deleted", src)
-                    // remove all from hashmap
+                    println!("{:#?} was deleted", src);
                 }
                 DebouncedEvent::Rename(src, dest) => {
                     println!("{:#?} was renamed {:#?}", src, dest)
+                    // this won't be handled for now
                 }
                 _ => {}
             },
             Err(e) => eprintln!("watch error {:#?}", e),
         }
-        /*if TypeId::of::<File>() == root_resource.type_id() {
-            //do a thing
-        }
-        if TypeId::of::<Texture>() == root_resource.type_id() {
-            //do a thing
-        }*/
         Ok(())
     }
-    pub fn get_texture(&mut self, filename: &str) -> Option<Arc<Texture>> {
-        // move this to some form of dictionary
-        let path_to_file = &format!("{}/textures/{}.png", self.root, filename);
-        // 1: is the file loaded?
-        if !self.resources.contains_key(path_to_file) {
-            // 2: Load the file and create the texture
-            let raw_bytes = std::fs::read(path_to_file)
-                .map_err(|_| eprintln!("couldn't open file: {}", filename))
-                .ok()?;
-            let image = image::load_from_memory(&raw_bytes[..])
-                .map_err(|e| eprintln!("{}", e))
-                .ok()?;
-            let buf_image = image
-                .as_rgba8()
-                .ok_or(anyhow!("unable to get rgba data"))
-                .map_err(|e| eprintln!("{}", e))
-                .ok()?
-                .clone();
-            let texture: Arc<dyn Resource> = Arc::new(Texture { diffuse: buf_image });
-            let file = File {
-                dependency: texture.clone(),
-                raw_file: raw_bytes.clone(),
-            };
-            self.resources
-                .insert(format!("file_{}", filename), Arc::new(file));
-            self.resources
-                .insert(format!("texture_{}", filename), texture);
+    //
+    //  This section is for getting Resources from the Manager
+    //
+    pub fn get_texture(&mut self, filename: &str) -> Result<Arc<Texture>> {
+        let mut filename = filename;
+
+        if !self.file_map.contains_key(filename) {
+            filename = "error-texture";
         }
-        // TODO: instead of ok replace the return with a generic texture if not found
-        Some(
+        let path_to_file = self.get_abs_file_path(filename);
+
+        if !self
+            .resources
+            .contains_key(&ResourceKey::Texture(filename.to_string()))
+        {
+            // 2: Load the file and create the texture
+            println!("{:#?}", path_to_file);
+            let mut read_bytes = std::fs::read(path_to_file.clone());
+            if read_bytes.is_err() {
+                error!("unable to find file: {:#?}", path_to_file);
+                read_bytes = std::fs::read(self.get_abs_file_path("error-texture"));
+                debug!(
+                    "loaded file: {:#?}",
+                    self.get_abs_file_path("error-texture")
+                );
+            } else {
+                debug!("loaded file: {:#?}", path_to_file);
+            }
+            let mut file = File {
+                dependency: None,
+                data: read_bytes.unwrap(),
+            };
+            let texture: Arc<dyn Resource> =
+                Arc::new(self.load_texture_from_raw(file.data.clone())?);
+            file.dependency = Some(filename.to_string());
             self.resources
-                .get(&format!("texture_{}", filename))
-                .ok_or(anyhow!("no such texture resource!"))
-                .map_err(|e| eprintln!("{}", e))
-                .ok()?
-                .clone()
-                .downcast_arc::<Texture>()
-                .map_err(|_| "This shouldn't happen...")
-                .unwrap(),
-        )
+                .insert(ResourceKey::File(filename.to_string()), Arc::new(file));
+            debug!("stored file resource for: {:#?}", filename);
+            self.resources
+                .insert(ResourceKey::Texture(filename.to_string()), texture);
+            debug!("stored texture resource for: {:#?}", filename);
+        }
+        Ok(self
+            .resources
+            .get(&ResourceKey::Texture(filename.to_string()))
+            .ok_or(anyhow!("no such texture resource!"))?
+            .clone()
+            .downcast_arc::<Texture>()
+            .map_err(|_| "This shouldn't happen...")
+            .unwrap())
+    }
+    //
+    //  This section is for helper functions and things that shouldn't be public
+    //
+    #[allow(dead_code)]
+    fn update_dep_chain(&mut self, res: String, prev_res: Arc<dyn Resource>) -> Result<()> {
+        Ok(())
+    }
+
+    fn load_texture_from_raw(&mut self, raw_bytes: Vec<u8>) -> Result<Texture> {
+        let image = image::load_from_memory(&raw_bytes[..])?;
+        let buf_image = image
+            .as_rgba8()
+            .ok_or(anyhow!("unable to get rgba data"))?
+            .clone();
+        Ok(Texture { data: buf_image })
+    }
+    /// Update A File Resource
+    fn update_file() {}
+    /// Update A Texture Resource
+    fn update_texture() {}
+
+    fn get_abs_file_path(&self, filename: &str) -> PathBuf {
+        let mut abs = self.root.clone();
+        abs.push(self.file_map.get(filename).unwrap());
+        abs
     }
 }
