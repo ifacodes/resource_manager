@@ -10,6 +10,7 @@ pub struct Texture {
 
 impl Resource for Texture {}
 
+#[derive(Debug, Clone)]
 pub struct File {
     pub dependency: Option<String>,
     pub data: Vec<u8>,

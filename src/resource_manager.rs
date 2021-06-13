@@ -2,12 +2,7 @@ use crate::resource::{File, Resource, ResourceKey, Texture};
 use anyhow::*;
 use log::{debug, error};
 use notify::{watcher, DebouncedEvent, ReadDirectoryChangesWatcher, RecursiveMode, Watcher};
-use std::{
-    collections::HashMap,
-    path::{self, Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 pub struct ResourceManager {
     root: PathBuf,
@@ -70,34 +65,56 @@ impl ResourceManager {
     //  This section is for getting Resources from the Manager
     //
     pub fn get_texture(&mut self, filename: &str) -> Result<Arc<Texture>> {
+        // get the correct file path
         let mut filename = filename;
-
         if !self.file_map.contains_key(filename) {
             filename = "error-texture";
         }
         let path_to_file = self.get_abs_file_path(filename);
 
+        // check to see if the texture is already loaded
         if !self
             .resources
             .contains_key(&ResourceKey::Texture(filename.to_string()))
         {
-            // 2: Load the file and create the texture
-            println!("{:#?}", path_to_file);
-            let mut read_bytes = std::fs::read(path_to_file.clone());
-            if read_bytes.is_err() {
-                error!("unable to find file: {:#?}", path_to_file);
-                read_bytes = std::fs::read(self.get_abs_file_path("error-texture"));
-                debug!(
-                    "loaded file: {:#?}",
-                    self.get_abs_file_path("error-texture")
-                );
+            debug!("Texture: {:#?} not already loaded.", filename);
+            // check to see if the file has already been loaded
+            let mut file: File;
+            if !self
+                .resources
+                .contains_key(&ResourceKey::File(filename.to_string()))
+            {
+                debug!("File: {:#?} not already loaded.", filename);
+                // load the raw file
+                let mut read_bytes = std::fs::read(path_to_file.clone());
+                // if the file isn't found return the generic texture file
+                if read_bytes.is_err() {
+                    error!("unable to find file: {:#?}", path_to_file);
+                    read_bytes = std::fs::read(self.get_abs_file_path("error-texture"));
+                    debug!(
+                        "loaded file: {:#?}",
+                        self.get_abs_file_path("error-texture")
+                    );
+                } else {
+                    debug!("loaded file: {:#?}", path_to_file);
+                }
+                file = File {
+                    dependency: None,
+                    data: read_bytes.unwrap(),
+                };
             } else {
-                debug!("loaded file: {:#?}", path_to_file);
+                debug!("File {:#?} already loaded.", filename);
+                let arc = self
+                    .resources
+                    .get(&&ResourceKey::File(filename.to_string()))
+                    .unwrap()
+                    .clone()
+                    .downcast_arc::<File>()
+                    .map_err(|_| "This shouldn't happen...")
+                    .unwrap();
+                file = (*arc).clone();
             }
-            let mut file = File {
-                dependency: None,
-                data: read_bytes.unwrap(),
-            };
+            // create texture
             let texture: Arc<dyn Resource> =
                 Arc::new(self.load_texture_from_raw(file.data.clone())?);
             file.dependency = Some(filename.to_string());
@@ -107,6 +124,8 @@ impl ResourceManager {
             self.resources
                 .insert(ResourceKey::Texture(filename.to_string()), texture);
             debug!("stored texture resource for: {:#?}", filename);
+        } else {
+            debug!("Texture: {:#?} already loaded.", filename);
         }
         Ok(self
             .resources
@@ -120,11 +139,6 @@ impl ResourceManager {
     //
     //  This section is for helper functions and things that shouldn't be public
     //
-    #[allow(dead_code)]
-    fn update_dep_chain(&mut self, res: String, prev_res: Arc<dyn Resource>) -> Result<()> {
-        Ok(())
-    }
-
     fn load_texture_from_raw(&mut self, raw_bytes: Vec<u8>) -> Result<Texture> {
         let image = image::load_from_memory(&raw_bytes[..])?;
         let buf_image = image
