@@ -12,11 +12,21 @@ fn main() {
     let bytes = std::fs::read("./textures/happy-tree.png").unwrap();
     let image = image::load_from_memory(&bytes[..]).unwrap();
     let texture2 = image.as_rgba8().unwrap().clone();
-    assert_eq!(texture2, texture.data, "test");
+    let guard = texture.data.read().unwrap();
+    assert_eq!(texture2, guard.data);
+    drop(guard);
     loop {
         match rm.check_files() {
             Ok(()) => {}
             Err(e) => eprintln!("{:#?}", e),
         }
+        let guard = texture.data.read().unwrap();
+        if texture2 == guard.data {
+            println!("Not Updated!");
+        }
+        if texture2 != guard.data {
+            println!("Updated!");
+        }
+        drop(guard);
     }
 }

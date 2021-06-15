@@ -1,8 +1,13 @@
-use crate::resource::{File, Resource, ResourceKey, Texture};
+use crate::resource::{File, InnerFile, Resource, ResourceKey, Texture};
 use anyhow::*;
 use log::{debug, error};
 use notify::{watcher, DebouncedEvent, ReadDirectoryChangesWatcher, RecursiveMode, Watcher};
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 pub struct ResourceManager {
     root: PathBuf,
@@ -78,21 +83,27 @@ impl ResourceManager {
                             } else {
                                 debug!("loaded file: {:#?}", filepath);
                             }
-                            let mut file = File {
-                                dependency: None,
-                                data: read_bytes.unwrap(),
-                            };
-                            if old_file.dependency.is_some() {
-                                file.dependency = old_file.dependency.clone();
+                            let mut guard = old_file.data.write().unwrap();
+                            guard.data = read_bytes.unwrap();
+                            drop(guard);
+                            let guard = old_file.data.read().unwrap();
+                            let dependency = guard.dependency.clone();
+                            if dependency.is_some() {
                                 //  update the dependency!
-                                match file.dependency.unwrap() {
+                                match dependency.unwrap() {
                                     ResourceKey::Texture(key) => {
-                                        let new_texture = Texture::new(&file.data[..]);
-                                        debug!("new texture created for: {:#?}", key);
-                                        self.resources.insert(
-                                            ResourceKey::Texture(key),
-                                            Arc::new(new_texture),
-                                        );
+                                        let new_texture = Texture::new_inner(&guard.data[..]);
+                                        let old_texture = self
+                                            .resources
+                                            .get(&ResourceKey::Texture(key.clone()))
+                                            .unwrap()
+                                            .clone()
+                                            .downcast_arc::<Texture>()
+                                            .map_err(|_| error!("this shouldn't happen..."))
+                                            .unwrap();
+                                        let mut tguard = old_texture.data.write().unwrap();
+                                        tguard.data = new_texture.data;
+                                        debug!("texture: {:#?} updated", key);
                                     }
                                     _ => {}
                                 }
@@ -131,7 +142,6 @@ impl ResourceManager {
         {
             debug!("Texture: {:#?} not already loaded.", filename);
             // check to see if the file has already been loaded
-            let mut file: File;
             if !self
                 .resources
                 .contains_key(&ResourceKey::File(filename.to_string()))
@@ -150,29 +160,29 @@ impl ResourceManager {
                 } else {
                     debug!("loaded file: {:#?}", path_to_file);
                 }
-                file = File {
-                    dependency: None,
-                    data: read_bytes.unwrap(),
-                };
-            } else {
-                debug!("File {:#?} already loaded.", filename);
-                let arc = self
-                    .resources
-                    .get(&ResourceKey::File(filename.to_string()))
-                    .unwrap()
-                    .clone()
-                    .downcast_arc::<File>()
-                    .map_err(|_| "This shouldn't happen...")
-                    .unwrap();
-                file = (*arc).clone();
+                self.resources.insert(
+                    ResourceKey::File(filename.to_string()),
+                    Arc::new(File {
+                        data: RwLock::new(InnerFile {
+                            data: read_bytes.unwrap(),
+                            dependency: None,
+                        }),
+                    }),
+                );
             }
+            let file_guard = self
+                .resources
+                .get(&ResourceKey::File(filename.to_string()))
+                .unwrap()
+                .clone()
+                .downcast_arc::<File>()
+                .map_err(|_| "This shouldn't happen...")
+                .unwrap();
             // create texture
             let texture: Arc<dyn Resource> =
-                Arc::new(self.load_texture_from_raw(file.data.clone())?);
-            file.dependency = Some(ResourceKey::Texture(filename.to_string()));
-            self.resources
-                .insert(ResourceKey::File(filename.to_string()), Arc::new(file));
-            debug!("stored file resource for: {:#?}", filename);
+                Arc::new(self.load_texture_from_raw(file_guard.data.read().unwrap().data.clone())?);
+            file_guard.data.write().unwrap().dependency =
+                Some(ResourceKey::Texture(filename.to_string()));
             self.resources
                 .insert(ResourceKey::Texture(filename.to_string()), texture);
             debug!("stored texture resource for: {:#?}", filename);
