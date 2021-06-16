@@ -1,10 +1,11 @@
-use crate::resource::{File, InnerFile, Resource, ResourceKey, Texture};
+use crate::resource::{File, InnerFile, InnerTexture, Resource, ResourceKey, Texture};
 use anyhow::*;
 use log::{debug, error};
 use notify::{watcher, DebouncedEvent, ReadDirectoryChangesWatcher, RecursiveMode, Watcher};
 use std::{
     collections::HashMap,
     path::PathBuf,
+    ptr::read,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -22,6 +23,7 @@ impl ResourceManager {
     //
     //  This section is for initializing the ResourceManager
     //
+    /// Create a new ResourceManager
     pub fn new() -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut _watcher = watcher(tx, Duration::from_millis(2000)).unwrap();
@@ -39,6 +41,26 @@ impl ResourceManager {
             resources: HashMap::new(),
         }
     }
+
+    ///Load in the Generic Texture
+    fn gen_texture_load(&mut self) {
+        // This shouldn't fail! so we will panic if anything in this fails.
+        let key = String::from("error-texture");
+        let generic_data = std::fs::read(self.get_abs_file_path("error-texture")).unwrap();
+        let texture = Texture::new(&generic_data[..]);
+        let inner_file = InnerFile {
+            dependency: Some(ResourceKey::Texture(key.clone())),
+            data: generic_data,
+        };
+        let file = File {
+            data: RwLock::new(inner_file),
+        };
+        self.resources
+            .insert(ResourceKey::File(key.clone()), Arc::new(file));
+        self.resources
+            .insert(ResourceKey::Texture(key), Arc::new(texture));
+    }
+
     //
     //  This section is for handling updates to the Resources
     //
