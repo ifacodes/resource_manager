@@ -1,0 +1,7 @@
+{  
+    "happy-tree": "texture\\happy-tree.png", 
+    "mmm": "texture\\mmm.png",
+    "error-texture": "texture\\error-texture.png",
+    "error-text": "text\\error-text.txt",
+    "test-text": "text\\test-text.txt"
+}
