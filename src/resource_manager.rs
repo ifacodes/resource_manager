@@ -1,11 +1,10 @@
-use crate::resource::{File, InnerFile, InnerTexture, Resource, ResourceKey, Texture};
+use crate::resource::{File, InnerFile, Resource, ResourceKey, Texture};
 use anyhow::*;
 use log::{debug, error};
 use notify::{watcher, DebouncedEvent, ReadDirectoryChangesWatcher, RecursiveMode, Watcher};
 use std::{
     collections::HashMap,
     path::PathBuf,
-    ptr::read,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -48,13 +47,8 @@ impl ResourceManager {
         let key = String::from("error-texture");
         let generic_data = std::fs::read(self.get_abs_file_path("error-texture")).unwrap();
         let texture = Texture::new(&generic_data[..]);
-        let inner_file = InnerFile {
-            dependency: Some(ResourceKey::Texture(key.clone())),
-            data: generic_data,
-        };
-        let file = File {
-            data: RwLock::new(inner_file),
-        };
+        let file = File::new(generic_data);
+        file.set_dependency(Some(ResourceKey::File(key.clone())));
         self.resources
             .insert(ResourceKey::File(key.clone()), Arc::new(file));
         self.resources
@@ -150,37 +144,47 @@ impl ResourceManager {
     //  This section is for getting Resources from the Manager
     //
     pub fn get_texture(&mut self, filename: &str) -> Result<Arc<Texture>> {
-        // get the correct file path
-        let mut filename = filename;
+        // if the texture isn't in the resource.json file, provide a generic texture
         if !self.file_map.contains_key(filename) {
-            filename = "error-texture";
+            return Ok(self
+                .resources
+                .get(&&ResourceKey::Texture(String::from("error-texture")))
+                .unwrap()
+                .clone()
+                .downcast_arc::<Texture>()
+                .map_err(|_| "This shouldn't happen...")
+                .unwrap());
         }
         let path_to_file = self.get_abs_file_path(filename);
 
         // check to see if the texture is already loaded
-        if !self
+        if self
             .resources
             .contains_key(&ResourceKey::Texture(filename.to_string()))
         {
             debug!("Texture: {:#?} not already loaded.", filename);
             // check to see if the file has already been loaded
-            if !self
+            if self
                 .resources
                 .contains_key(&ResourceKey::File(filename.to_string()))
             {
                 debug!("File: {:#?} not already loaded.", filename);
                 // load the raw file
-                let mut read_bytes = std::fs::read(path_to_file.clone());
+                let read_bytes = std::fs::read(path_to_file.clone());
                 // if the file isn't found return the generic texture file
                 if read_bytes.is_err() {
-                    error!("unable to find file: {:#?}", path_to_file);
-                    read_bytes = std::fs::read(self.get_abs_file_path("error-texture"));
-                    debug!(
-                        "loaded file: {:#?}",
-                        self.get_abs_file_path("error-texture")
+                    error!(
+                        "Unable to find file: {:#?}\nReturning generic texture.",
+                        path_to_file
                     );
-                } else {
-                    debug!("loaded file: {:#?}", path_to_file);
+                    return Ok(self
+                        .resources
+                        .get(&&ResourceKey::Texture(String::from("error-texture")))
+                        .unwrap()
+                        .clone()
+                        .downcast_arc::<Texture>()
+                        .map_err(|_| "This shouldn't happen...")
+                        .unwrap());
                 }
                 self.resources.insert(
                     ResourceKey::File(filename.to_string()),
